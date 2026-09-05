@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>FairLane — Allocation Control Room</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  :root{
+    --bg:#0A0D0F;
+    --panel:#12161A;
+    --panel-border:#22282E;
+    --text:#E7E5DF;
+    --dim:#8A9198;
+    --accent:#00D9A3;   /* allocation / success */
+    --pending:#F5A623;  /* scoring / in-progress */
+    --danger:#FF5C5C;   /* failure */
+    --wire:#1B2126;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Space Grotesk',sans-serif;
+    min-height:100vh;
+  }
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  header{
+    padding:28px 32px 20px;
+    border-bottom:1px solid var(--panel-border);
+    display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px;
+  }
+  header h1{margin:0; font-size:22px; font-weight:700; letter-spacing:0.02em;}
+  header h1 span{color:var(--accent);}
+  header p{margin:4px 0 0; color:var(--dim); font-size:13px;}
+  .tape-wrap{
+    border-bottom:1px solid var(--panel-border);
+    background:var(--panel);
+    overflow:hidden;
+    white-space:nowrap;
+    padding:8px 0;
+  }
+  .tape{
+    display:inline-block;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    color:var(--dim);
+    padding-left:100%;
+    animation:scroll 22s linear infinite;
+  }
+  .tape b{color:var(--accent); font-weight:600;}
+  @keyframes scroll{ from{transform:translateX(0);} to{transform:translateX(-100%);} }
+
+  main{ display:grid; grid-template-columns: 1.15fr 1fr; gap:20px; padding:24px 32px 40px; }
+  @media (max-width:980px){ main{ grid-template-columns:1fr; } }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    border-radius:10px;
+    padding:20px;
+  }
+  .panel h2{
+    margin:0 0 4px; font-size:13px; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--dim); font-weight:600;
+  }
+  .panel .sub{color:var(--dim); font-size:12px; margin-bottom:16px;}
+
+  .items{display:flex; flex-direction:column; gap:10px; margin-bottom:22px;}
+  .item{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; border:1px solid var(--wire); border-radius:8px; background:#0E1215;
+  }
+  .item .name{font-size:13.5px;}
+  .item .stock{font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--accent);}
+  .item .stock.low{color:var(--danger);}
+
+  .controls{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:22px;}
+  button{
+    background:transparent; border:1px solid var(--panel-border); color:var(--text);
+    padding:8px 12px; border-radius:7px; font-family:'Space Grotesk',sans-serif; font-size:12.5px;
+    cursor:pointer; transition:0.15s;
+  }
+  button:hover{ border-color:var(--accent); color:var(--accent); }
+  button.danger:hover{ border-color:var(--danger); color:var(--danger); }
+  button.primary{ background:var(--accent); color:#04140F; border-color:var(--accent); font-weight:600; }
+  button.primary:hover{ opacity:0.88; color:#04140F; }
+
+  .scoreboard{display:flex; flex-direction:column; gap:8px;}
+  .bid-row{
+    display:grid; grid-template-columns: 90px 1fr 70px 90px;
+    align-items:center; gap:10px; padding:9px 12px; border:1px solid var(--wire); border-radius:7px;
+    background:#0E1215; font-size:12.5px;
+  }
+  .bid-row.winner{ border-color:var(--accent); background:#0B1A16; }
+  .bid-row.loser{ opacity:0.55; }
+  .bar-track{ background:#1B2126; border-radius:5px; height:8px; overflow:hidden; }
+  .bar-fill{ height:100%; background:var(--accent); }
+  .score-val{ text-align:right; font-family:'IBM Plex Mono',monospace; color:var(--accent); }
+
+  .feed{ max-height:560px; overflow-y:auto; display:flex; flex-direction:column-reverse; gap:0; }
+  .log-entry{
+    padding:9px 4px; border-bottom:1px solid var(--wire); font-size:12.5px; line-height:1.5;
+    display:flex; gap:10px;
+  }
+  .log-entry .tag{
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; padding:2px 6px; border-radius:4px;
+    height:fit-content; white-space:nowrap; text-transform:uppercase; letter-spacing:0.03em;
+  }
+  .log-entry .ts{color:var(--dim); font-family:'IBM Plex Mono',monospace; font-size:10.5px; white-space:nowrap;}
+  .tag.BID_RECEIVED{background:#1B2A33; color:#5FD0FF;}
+  .tag.BATCH_OPENED,.tag.BATCH_CLOSED{background:#2A2618; color:var(--pending);}
+  .tag.SCORED{background:#2A2618; color:var(--pending);}
+  .tag.ALLOCATED,.tag.PAYMENT_SUCCESS{background:#12281F; color:var(--accent);}
+  .tag.LOSS_EXPLAINED{background:#2A2020; color:#C98080;}
+  .tag.WIN_EXPLAINED{background:#12281F; color:var(--accent);}
+  .tag.PAYMENT_ATTEMPT{background:#22262A; color:var(--dim);}
+  .tag.PAYMENT_FAILED{background:#2E1414; color:var(--danger);}
+  .tag.REALLOCATED{background:#20241C; color:#B8D96B;}
+  .tag.STOCK_RETURNED{background:#22262A; color:var(--dim);}
+
+  .empty{color:var(--dim); font-size:12.5px; padding:20px 0; text-align:center;}
+  footer{padding:0 32px 30px; color:var(--dim); font-size:11.5px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Fair<span>Lane</span> — Allocation Control Room</h1>
+    <p>What happens when multiple AI buyer agents bid on the same scarce stock, at once — explained, bounded, and never oversold.</p>
+  </div>
+  <div class="controls" id="topControls"></div>
+</header>
+
+<div class="tape-wrap"><div class="tape mono" id="tape">Waiting for bids…</div></div>
+
+<main>
+  <section class="panel">
+    <h2>Merchant Stock</h2>
+    <div class="sub">Live inventory across the demo catalog.</div>
+    <div class="items" id="items"></div>
+
+    <h2>Demo Controls</h2>
+    <div class="sub">Run the flash-drop scenario live.</div>
+    <div class="controls">
+      <button class="primary" onclick="forceClose('sku-001')">Close batch now (sku-001)</button>
+      <button class="danger" onclick="promptForceFail()">Force-fail an agent's payment</button>
+      <button onclick="resetDemo()">Reset demo</button>
+    </div>
+
+    <h2 style="margin-top:22px;">Live Scoreboard — sku-001</h2>
+    <div class="sub">score = 0.55×bid + 0.25×urgency + 0.20×loyalty (transparent, not a black box)</div>
+    <div class="scoreboard" id="scoreboard"><div class="empty">No bids yet for this batch.</div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Audit Trail</h2>
+    <div class="sub">Every decision, explained, in order. This is what "bounded and gated" looks like.</div>
+    <div class="feed" id="feed"></div>
+  </section>
+</main>
+
+<footer>FairLane — Track 01: AI Growth &amp; Agentic Commerce. Razorpay test-mode payments only; no real funds move.</footer>
+
+<script>
+const socket = io();
+const itemsEl = document.getElementById('items');
+const feedEl = document.getElementById('feed');
+const scoreboardEl = document.getElementById('scoreboard');
+const tapeEl = document.getElementById('tape');
+
+let catalogState = {};
+let tapeMsgs = [];
+
+function renderItems(catalog){
+  catalogState = catalog;
+  itemsEl.innerHTML = Object.entries(catalog).map(([id, item]) => `
+    <div class="item">
+      <div class="name">${item.name}</div>
+      <div class="stock ${item.stock <= 3 ? 'low' : ''}">${item.stock} in stock</div>
+    </div>
+  `).join('');
+}
+
+function pushTape(msg){
+  tapeMsgs.push(msg);
+  if (tapeMsgs.length > 30) tapeMsgs.shift();
+  tapeEl.innerHTML = tapeMsgs.map(m => `<b>›</b> ${m}`).join('&nbsp;&nbsp;&nbsp;&nbsp;');
+}
+
+function addLog(record){
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  const time = new Date(record.ts).toLocaleTimeString();
+  div.innerHTML = `<span class="ts">${time}</span><span class="tag ${record.type}">${record.type.replace(/_/g,' ')}</span><span>${record.detail}</span>`;
+  feedEl.prepend(div);
+}
+
+function renderScoreboard(list){
+  if (!list || list.length === 0){
+    scoreboardEl.innerHTML = '<div class="empty">No bids yet for this batch.</div>';
+    return;
+  }
+  const max = Math.max(...list.map(s => s.score), 0.001);
+  scoreboardEl.innerHTML = list.map(s => `
+    <div class="bid-row">
+      <div>${s.agentId}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(s.score/max*100).toFixed(0)}%"></div></div>
+      <div class="mono">₹${s.bidAmount}</div>
+      <div class="score-val">${s.score.toFixed(3)}</div>
+    </div>
+  `).join('');
+}
+
+socket.on('bootstrap', ({ catalog, audit }) => {
+  renderItems(catalog);
+  audit.slice(-40).forEach(addLog);
+});
+
+socket.on('reset', () => {
+  feedEl.innerHTML = '';
+  scoreboardEl.innerHTML = '<div class="empty">No bids yet for this batch.</div>';
+  tapeMsgs = [];
+  pushTape('Demo reset.');
+});
+
+socket.on('audit', (record) => addLog(record));
+
+socket.on('event', (evt) => {
+  if (evt.type === 'BID_RECEIVED'){
+    pushTape(`${evt.bid.agentId} bid ₹${evt.bid.bidAmount} on ${evt.bid.itemId}`);
+  }
+  if (evt.type === 'SCOREBOARD'){
+    renderScoreboard(evt.scoreboard);
+  }
+  if (evt.type === 'ALLOCATED'){
+    pushTape(`Allocated to: ${evt.winners.map(w=>w.agentId).join(', ')}`);
+    // refresh stock display
+    fetch('/api/catalog').then(r=>r.json()).then(renderItems);
+  }
+  if (evt.type === 'PAYMENT_FAILED'){
+    pushTape(`⚠ payment failed for ${evt.agentId} — reallocating…`);
+  }
+  if (evt.type === 'REALLOCATED'){
+    pushTape(`↻ reallocated to ${evt.agentId}`);
+  }
+  if (evt.type === 'PAYMENT_SUCCESS' || evt.type === 'STOCK_RETURNED'){
+    fetch('/api/catalog').then(r=>r.json()).then(renderItems);
+  }
+});
+
+function forceClose(itemId){
+  fetch(`/api/demo/force-close/${itemId}`, { method:'POST' });
+}
+function promptForceFail(){
+  const agentId = prompt('Agent ID to force-fail on next payment (e.g. agent-1):');
+  if (agentId) fetch('/api/demo/force-fail', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ agentId }) });
+}
+function resetDemo(){
+  fetch('/api/demo/reset', { method:'POST' });
+}
+</script>
+</body>
+</html>
